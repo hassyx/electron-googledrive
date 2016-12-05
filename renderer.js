@@ -56,14 +56,35 @@ function authorize(credentials, callback) {
     });
 }
 
+const http = require('http');
+
 function getNewToken(oauth2Client, callback) {
-    var authUrl = oauth2Client.generateAuthUrl({
-        access_type: 'offline',
-        scope: SCOPES
+    getPort(port => {
+        const authUrl = oauth2Client.generateAuthUrl({
+            response_type: 'code token',
+            redirect_uri: 'http://localhost:' + port,
+            scope: SCOPES
+        });
+
+        // サーバを立てる
+        http.createServer((req, res) => {
+            // reqから情報を取得
+            let postData = "";
+            req.on("data", chunk => postData += chunk);
+            req.on("end", () => {
+                console.log(postData);
+                const element = document.getElementById('text');
+                element.textContent = req.url;
+
+                res.writeHead(200, {'Content-Type': 'text/plain'});　
+                res.write('hello world');
+                res.end();
+            });
+        }).listen(port, 'localhost');
+
+        // authUrlを別ウィンドウで表示する
+        asynchronousMessage(authUrl);
     });
-    
-    // authUrlを別ウィンドウで表示する
-    asynchronousMessage(authUrl);
 }
 
 /*
@@ -119,4 +140,23 @@ function listFiles(auth) {
             }
         }
     });
+}
+
+const net = require('net');
+let portrange = 45032
+
+function getPort(cb) {
+    var port = portrange;
+    portrange += 1;
+
+    var server = net.createServer();
+    server.listen(port, function (err) {
+        server.once('close', function () {
+            cb(port);
+        })
+        server.close();
+    })
+    server.on('error', function (err) {
+        getPort(cb);
+    })
 }
