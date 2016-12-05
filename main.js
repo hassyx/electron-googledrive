@@ -29,10 +29,15 @@ ipcMain.on('open-auth-window', function (event, arg) {
   //console.log("asynchronous-message arg : " + arg);
   //event.sender.send('asynchronous-reply', 'asynchronous-message main process.');
   
+  /*
   authWindow = new BrowserWindow({width: 800, height: 600});
   authWindow.loadURL(arg);
 
   authWindow.on('closed', function() {
     authWindow = null;
   });
+  */
+
+  electron.shell.openExternal(arg)
+
 });
