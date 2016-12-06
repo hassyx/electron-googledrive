@@ -39,44 +39,44 @@ window.onload = function () {
 };
 
 function authorize(credentials, callback) {
-    var clientSecret = credentials.installed.client_secret;
-    var clientId = credentials.installed.client_id;
-    var redirectUrl = credentials.installed.redirect_uris[0];
-    var auth = new googleAuth();
-    var oauth2Client = new auth.OAuth2(clientId, clientSecret, redirectUrl);
+    getPort(port => {
+        let clientSecret = credentials.installed.client_secret;
+        let clientId = credentials.installed.client_id;
+        let redirectUrl = 'http://localhost:' + port;
+        let auth = new googleAuth();
+        let oauth2Client = new auth.OAuth2(clientId, clientSecret, redirectUrl);
 
-    // Check if we have previously stored a token.
-    fs.readFile(TOKEN_PATH, function(err, token) {
-        if (err) {
-            getNewToken(oauth2Client, callback);
-        } else {
-            /*
-            oauth2Client.credentials = JSON.parse(token);
-            callback(oauth2Client);
-            */
-        }
+        // Check if we have previously stored a token.
+        fs.readFile(TOKEN_PATH, function(err, token) {
+            if (err) {
+                getNewToken(oauth2Client, port, callback);
+            } else {
+                /*
+                oauth2Client.credentials = JSON.parse(token);
+                callback(oauth2Client);
+                */
+            }
+        });
     });
 }
 
 const http = require('http');
 
-function getNewToken(oauth2Client, callback) {
-    getPort(port => {
-        const authUrl = oauth2Client.generateAuthUrl({
-            response_type: 'code',
-            redirect_uri: 'http://localhost:' + port,
-            scope: SCOPES
-        });
-
-        // サーバを立てる
-        http.createServer(httpCallback).listen(port, 'localhost');;
-
-        // authUrlを別ウィンドウで表示する
-        asynchronousMessage(authUrl);
+function getNewToken(oauth2Client, port, callback) {
+    const authUrl = oauth2Client.generateAuthUrl({
+        scope: SCOPES
     });
+
+    // サーバを立てる
+    http.createServer((req, res) => { 
+        httpCallback(req, res, oauth2Client, callback);
+    }).listen(port, 'localhost');;
+
+    // authUrlを別ウィンドウで表示する
+    asynchronousMessage(authUrl);
 }
 
-function httpCallback(request, response) {
+function httpCallback(request, response, oauth2Client, callback) {
     // reqから情報を取得
     let postData = "";
     request.on("data", chunk => postData += chunk);
@@ -86,7 +86,7 @@ function httpCallback(request, response) {
         response.writeHead(200, {'Content-Type': 'text/plain'});　
         if (code) {
             response.write('Authentication succeeded!');
-            exchangeCodeForToken(code);
+            exchangeCodeForToken(oauth2Client, code, callback);
         } else {
             response.write('Authentication failed!');
             // 失敗した場合の処理を追加すべし
@@ -105,8 +105,16 @@ function parseUrlAndGetCode(url) {
     }
 };
 
-function exchangeCodeForToken(code) {
-
+function exchangeCodeForToken(oauth2Client, code, callback) {
+    oauth2Client.getToken(code, function(err, token) {
+        if (err) {
+            console.log('Error while trying to retrieve access token', err);
+            return;
+        }
+        oauth2Client.credentials = token;
+        //storeToken(token);
+        callback(oauth2Client);
+    });
 }
 
 /*
@@ -141,6 +149,11 @@ function storeToken(token) {
 }
 
 function listFiles(auth) {
+    
+    const elm = document.getElementById('text');
+    elm.textContent = "hogehoge";
+
+
     var service = google.drive('v3');
     service.files.list({
         auth: auth,
