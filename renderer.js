@@ -50,8 +50,10 @@ function authorize(credentials, callback) {
         if (err) {
             getNewToken(oauth2Client, callback);
         } else {
+            /*
             oauth2Client.credentials = JSON.parse(token);
             callback(oauth2Client);
+            */
         }
     });
 }
@@ -61,30 +63,50 @@ const http = require('http');
 function getNewToken(oauth2Client, callback) {
     getPort(port => {
         const authUrl = oauth2Client.generateAuthUrl({
-            response_type: 'code token',
+            response_type: 'code',
             redirect_uri: 'http://localhost:' + port,
             scope: SCOPES
         });
 
         // サーバを立てる
-        http.createServer((req, res) => {
-            // reqから情報を取得
-            let postData = "";
-            req.on("data", chunk => postData += chunk);
-            req.on("end", () => {
-                console.log(postData);
-                const element = document.getElementById('text');
-                element.textContent = req.url;
-
-                res.writeHead(200, {'Content-Type': 'text/plain'});　
-                res.write('hello world');
-                res.end();
-            });
-        }).listen(port, 'localhost');
+        http.createServer(httpCallback).listen(port, 'localhost');;
 
         // authUrlを別ウィンドウで表示する
         asynchronousMessage(authUrl);
     });
+}
+
+function httpCallback(request, response) {
+    // reqから情報を取得
+    let postData = "";
+    request.on("data", chunk => postData += chunk);
+    request.on("end", () => {
+        const code = parseUrlAndGetCode(request.url);
+        
+        response.writeHead(200, {'Content-Type': 'text/plain'});　
+        if (code) {
+            response.write('Authentication succeeded!');
+            exchangeCodeForToken(code);
+        } else {
+            response.write('Authentication failed!');
+            // 失敗した場合の処理を追加すべし
+        }
+        response.end();
+    });
+}
+
+function parseUrlAndGetCode(url) {
+    let query = require('url').parse(url, true).query;
+
+    if (query && query.code) {
+        return query.code;
+    } else {
+        return null;
+    }
+};
+
+function exchangeCodeForToken(code) {
+
 }
 
 /*
