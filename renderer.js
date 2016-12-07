@@ -11,21 +11,8 @@ const app = electron.remote.app;
 const dialog = electron.remote.dialog;
 const ipcRenderer = electron.ipcRenderer;
 const fs = require('fs');
-
-// 非同期でレンダラープロセスからメインプロセスにメッセージを送信する
-function asynchronousMessage(data) {
-    /*
-    ipcRenderer.on('asynchronous-reply', function(response) {
-        console.log("asynchronousMessage response : " + response);
-    });
-    */
-    
-    //ipcRenderer.send('open-auth-window', data);
-
-    // webviewタグを取得し、loadURL(data)でGoogleの認証ページを読み込む。
-    const webview = document.getElementById('authview');
-    webview.loadURL(data);
-}
+const http = require('http');
+const querystring = require('querystring');
 
 const SCOPES = ['https://www.googleapis.com/auth/drive.metadata.readonly'];
 const TOKEN_PATH = path.join(app.getPath('userData'), 'drive-nodejs-quickstart.json');
@@ -34,7 +21,36 @@ const SETTING_PATH = path.join(app.getPath('userData'), 'settings.json');
 // トークンだけではなくウィンドウサイズとかも保存したい
 let settings = {};
 
+// WebView領域がウィンドウのサイズと一致するように
+window.onresize = () => {
+    var webview = document.getElementById('authview');
+    webview.style.height = document.documentElement.clientHeight + "px";
+    webview.style.width = document.documentElement.clientWidth + "px";
+}
+
 window.onload = () => {
+    // WebViewでページがロード完了した際に呼ばれるコールバックを設定
+    var webview = document.getElementById('authview');
+    webview.addEventListener('did-stop-loading', () => {
+        const webview = document.getElementById('authview');
+        const url = require('url').parse(webview.getURL(), true);
+        if (url.hostname === "localhost") {
+            // GoogleによるOAuth認証に成功し、localhostにリダイレクトされた。
+            // ハッシュにaccess_tokenがあるか調べる
+            const query = querystring.parse(url.hash.substring(1));
+            if (query.error) {
+                // TODO: エラー発生したのでリトライさせる
+            } else {
+                console.log(query.access_token);
+            }
+            
+            /*
+            oauth2Client.credentials.access_token = query.access_token;
+            listFiles(oauth2Client);
+            */
+        }
+    });
+
     // 設定ファイルを読み込む
     fs.readFile(SETTING_PATH, (err, data) => {
         if (err) {
@@ -51,20 +67,13 @@ window.onload = () => {
             try {
                 settings = JSON.parse(data);
             } catch (e) {
-                // 設定ファイルが異常なので、新たに設定する
-                setDefaultSetting();
+                // 設定ファイルが異常なので、初期値を設定する
+                setDefaultSetting(settings);
             }
-
         }
-        authorize(listFiles);       
+        authorize();       
     });
 };
-
-window.onresize = () => {
-    var webview = document.getElementById('authview');
-    webview.style.height = document.documentElement.clientHeight + "px";
-    webview.style.width = document.documentElement.clientWidth + "px";
-}
 
 function setDefaultSetting(settings) {
     settings = {
@@ -72,30 +81,23 @@ function setDefaultSetting(settings) {
     };
 }
 
-function authorize(callback) {
+function authorize() {
     getPort(port => {
         let clientId = '513856185766-nqlth14qgv55ag90j1esi77kmlogpvu3.apps.googleusercontent.com';
         let redirectUrl = 'http://localhost:' + port;
         let auth = new googleAuth();
         let oauth2Client = new auth.OAuth2(clientId, '', redirectUrl);
-
-        // Check if we have previously stored a token.
-        fs.readFile(TOKEN_PATH, function(err, token) {
-            if (err) {
-                getNewToken(oauth2Client, port, callback);
-            } else {
-                /*
-                oauth2Client.credentials = JSON.parse(token);
-                callback(oauth2Client);
-                */
-            }
-        });
+        
+        // settingsにaccess_tokenが保存されているか？
+        if (settings.access_token) {
+            
+        } else {
+            getAccessToken(oauth2Client, port);
+        }
     });
 }
 
-const http = require('http');
-
-function getNewToken(oauth2Client, port, callback) {
+function getAccessToken(oauth2Client, port) {
     const authUrl = oauth2Client.generateAuthUrl({
         response_type: 'code token',
         scope: SCOPES
@@ -103,41 +105,21 @@ function getNewToken(oauth2Client, port, callback) {
 
     // サーバを立てる
     http.createServer((req, res) => { 
-        httpCallback(req, res, oauth2Client, callback);
-    }).listen(port, 'localhost');;
+        httpCallback(req, res, oauth2Client);
+    }).listen(port, 'localhost');
 
-    // authUrlを別ウィンドウで表示する
-    asynchronousMessage(authUrl);
+    // authUrlをWebView中にロードする
+    const webview = document.getElementById('authview');
+    webview.loadURL(authUrl);
 }
 
-function httpCallback(request, response, oauth2Client, callback) {
-    // reqから情報を取得
+function httpCallback(request, response, oauth2Client) {
     let postData = "";
     request.on("data", chunk => postData += chunk);
-    request.on("end", () => {
-        const code = parseUrlAndGetCode(request.url);
-        
-        response.writeHead(200, {'Content-Type': 'text/plain'});　
-        if (code) {
-            response.write('Authentication succeeded!');
-            exchangeCodeForToken(oauth2Client, code, callback);
-        } else {
-            response.write('Authentication failed!');
-            // 失敗した場合の処理を追加すべし
-        }
-        response.end();
-
-        setTimeout(() => {
-            // HTTPサーバ側では、認証ページのコールバックが返ってきた際に、
-            // webviewタグを取得し、getURL()でurl(とフラグメント)を取得する。
-            const webview = document.getElementById('authview');
-            console.log(webview.getURL());
-        }, 2000);
-
-    });
+    request.on("end", () => response.end());
 }
 
-function parseUrlAndGetCode(url) {
+function parseUrlAndGetToken(url) {
     let query = require('url').parse(url, true).query;
 
     if (query && query.code) {
@@ -147,55 +129,7 @@ function parseUrlAndGetCode(url) {
     }
 };
 
-function exchangeCodeForToken(oauth2Client, code, callback) {
-    oauth2Client.getToken(code, function(err, token) {
-        if (err) {
-            console.log('Error while trying to retrieve access token', err);
-            return;
-        }
-        oauth2Client.credentials = token;
-        //storeToken(token);
-        callback(oauth2Client);
-    });
-}
-
-/*
-function getNewToken(oauth2Client, callback) {
-    var authUrl = oauth2Client.generateAuthUrl({
-        access_type: 'offline',
-        scope: SCOPES
-    });
-    console.log('Authorize this app by visiting this url: ', authUrl);
-    var rl = readline.createInterface({
-        input: process.stdin,
-        output: process.stdout
-    });
-    rl.question('Enter the code from that page here: ', function(code) {
-        rl.close();
-        oauth2Client.getToken(code, function(err, token) {
-            if (err) {
-                console.log('Error while trying to retrieve access token', err);
-                return;
-            }
-            oauth2Client.credentials = token;
-            storeToken(token);
-            callback(oauth2Client);
-        });
-    });
-}
-*/
-
-function storeToken(token) {
-  fs.writeFile(TOKEN_PATH, JSON.stringify(token));
-  console.log('Token stored to ' + TOKEN_PATH);
-}
-
 function listFiles(auth) {
-    
-    const elm = document.getElementById('text');
-    elm.textContent = "hogehoge";
-
-
     var service = google.drive('v3');
     service.files.list({
         auth: auth,
