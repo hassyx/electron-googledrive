@@ -1,6 +1,5 @@
 'use strict';
 
-const fs = require('fs');
 const path = require('path');
 const readline = require('readline');
 const google = require('googleapis');
@@ -8,8 +7,10 @@ const googleAuth = require('google-auth-library');
 
 
 const electron = require('electron');
-const app = electron.app;
-const {ipcRenderer} = require('electron')
+const app = electron.remote.app;
+const dialog = electron.remote.dialog;
+const ipcRenderer = electron.ipcRenderer;
+const fs = require('fs');
 
 // 非同期でレンダラープロセスからメインプロセスにメッセージを送信する
 function asynchronousMessage(data) {
@@ -18,33 +19,65 @@ function asynchronousMessage(data) {
         console.log("asynchronousMessage response : " + response);
     });
     */
-    ipcRenderer.send('open-auth-window', data);
+    
+    //ipcRenderer.send('open-auth-window', data);
+
+    // webviewタグを取得し、loadURL(data)でGoogleの認証ページを読み込む。
+    const webview = document.getElementById('authview');
+    webview.loadURL(data);
 }
 
-// If modifying these scopes, delete your previously saved credentials
-// at ~/.credentials/drive-nodejs-quickstart.json
 const SCOPES = ['https://www.googleapis.com/auth/drive.metadata.readonly'];
-const TOKEN_PATH = path.join(fs.realpathSync('./'), 'drive-nodejs-quickstart.json');
+const TOKEN_PATH = path.join(app.getPath('userData'), 'drive-nodejs-quickstart.json');
+const SETTING_PATH = path.join(app.getPath('userData'), 'settings.json');
 
-window.onload = function () {
-    // Load client secrets from a local file.
-    fs.readFile('client_secret.json', function processClientSecrets(err, content) {
+// トークンだけではなくウィンドウサイズとかも保存したい
+let settings = {};
+
+window.onload = () => {
+    // 設定ファイルを読み込む
+    fs.readFile(SETTING_PATH, (err, data) => {
         if (err) {
-            console.log('Error loading client secret file: ' + err);
-            return;
-        }
+            // 存在しなかったらファイルを作成する
+            setDefaultSetting(settings);
 
-        authorize(JSON.parse(content), listFiles);       
+            fs.writeFile(SETTING_PATH, JSON.stringify(settings), err => {
+                if (err) {
+                    dialog.showErrorBox('エラー', '設定ファイルが読み込めません。');
+                    app.quit();
+                }
+            });
+        } else {
+            try {
+                settings = JSON.parse(data);
+            } catch (e) {
+                // 設定ファイルが異常なので、新たに設定する
+                setDefaultSetting();
+            }
+
+        }
+        authorize(listFiles);       
     });
 };
 
-function authorize(credentials, callback) {
+window.onresize = () => {
+    var webview = document.getElementById('authview');
+    webview.style.height = document.documentElement.clientHeight + "px";
+    webview.style.width = document.documentElement.clientWidth + "px";
+}
+
+function setDefaultSetting(settings) {
+    settings = {
+        // ここにデフォルトの設定を挿入
+    };
+}
+
+function authorize(callback) {
     getPort(port => {
-        let clientSecret = credentials.installed.client_secret;
-        let clientId = credentials.installed.client_id;
+        let clientId = '513856185766-nqlth14qgv55ag90j1esi77kmlogpvu3.apps.googleusercontent.com';
         let redirectUrl = 'http://localhost:' + port;
         let auth = new googleAuth();
-        let oauth2Client = new auth.OAuth2(clientId, clientSecret, redirectUrl);
+        let oauth2Client = new auth.OAuth2(clientId, '', redirectUrl);
 
         // Check if we have previously stored a token.
         fs.readFile(TOKEN_PATH, function(err, token) {
@@ -64,6 +97,7 @@ const http = require('http');
 
 function getNewToken(oauth2Client, port, callback) {
     const authUrl = oauth2Client.generateAuthUrl({
+        response_type: 'code token',
         scope: SCOPES
     });
 
@@ -92,6 +126,14 @@ function httpCallback(request, response, oauth2Client, callback) {
             // 失敗した場合の処理を追加すべし
         }
         response.end();
+
+        setTimeout(() => {
+            // HTTPサーバ側では、認証ページのコールバックが返ってきた際に、
+            // webviewタグを取得し、getURL()でurl(とフラグメント)を取得する。
+            const webview = document.getElementById('authview');
+            console.log(webview.getURL());
+        }, 2000);
+
     });
 }
 
@@ -177,21 +219,14 @@ function listFiles(auth) {
     });
 }
 
-const net = require('net');
-let portrange = 45032
+function getPort(callback) {
+    var net = require('net');
 
-function getPort(cb) {
-    var port = portrange;
-    portrange += 1;
-
-    var server = net.createServer();
-    server.listen(port, function (err) {
-        server.once('close', function () {
-            cb(port);
-        })
-        server.close();
-    })
-    server.on('error', function (err) {
-        getPort(cb);
-    })
+    var srv = net.createServer(sock => {
+        sock.end('Hello world\n');
+    });
+    srv.listen(0, () => {
+        callback(srv.address().port);
+        srv.close();
+    });
 }
