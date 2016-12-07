@@ -15,7 +15,6 @@ const http = require('http');
 const querystring = require('querystring');
 
 const SCOPES = ['https://www.googleapis.com/auth/drive.metadata.readonly'];
-const TOKEN_PATH = path.join(app.getPath('userData'), 'drive-nodejs-quickstart.json');
 const SETTING_PATH = path.join(app.getPath('userData'), 'settings.json');
 
 // トークンだけではなくウィンドウサイズとかも保存したい
@@ -28,39 +27,50 @@ window.onresize = () => {
     webview.style.width = document.documentElement.clientWidth + "px";
 }
 
-window.onload = () => {
-    // WebViewでページがロード完了した際に呼ばれるコールバックを設定
-    var webview = document.getElementById('authview');
-    webview.addEventListener('did-stop-loading', () => {
-        const webview = document.getElementById('authview');
-        const url = require('url').parse(webview.getURL(), true);
-        if (url.hostname === "localhost") {
-            // GoogleによるOAuth認証に成功し、localhostにリダイレクトされた。
-            // ハッシュにaccess_tokenがあるか調べる
-            const query = querystring.parse(url.hash.substring(1));
-            if (query.error) {
-                // TODO: エラー発生したのでリトライさせる
-            } else {
-                console.log(query.access_token);
-            }
-            
-            /*
-            oauth2Client.credentials.access_token = query.access_token;
-            listFiles(oauth2Client);
-            */
+// WebViewでページがロード完了した際に呼ばれるコールバック
+function webViewDidStopLoading() {
+    const webview = document.getElementById('authview');
+    const url = require('url').parse(webview.getURL(), true);
+    if (url.hostname === "localhost") {
+        // GoogleによるOAuth認証に成功し、localhostにリダイレクトされた。
+        // ハッシュにaccess_tokenがあるか調べる
+        const query = querystring.parse(url.hash.substring(1));
+        if (query.error) {
+            // TODO: エラー発生したのでリトライさせる
+        } else {
+            console.log(query.access_token);
         }
-    });
+        
+        settings.access_token = query.access_token;
+        fs.writeFile(SETTING_PATH, JSON.stringify(settings), err => {
+            if (err) {
+                dialog.showErrorBox('エラー', '設定ファイルが読み込めません。');
+                app.quit();
+                // TODO:リトライ
+            }
+        });
+
+        /*
+        oauth2Client.credentials.access_token = query.access_token;
+        listFiles(oauth2Client);
+        */
+    }
+}
+
+window.onload = () => {
+    var webview = document.getElementById('authview');
+    webview.addEventListener('did-stop-loading', webViewDidStopLoading);
 
     // 設定ファイルを読み込む
     fs.readFile(SETTING_PATH, (err, data) => {
         if (err) {
-            // 存在しなかったらファイルを作成する
             setDefaultSetting(settings);
-
+            // 存在しなかったので設定ファイルを作成する
             fs.writeFile(SETTING_PATH, JSON.stringify(settings), err => {
                 if (err) {
                     dialog.showErrorBox('エラー', '設定ファイルが読み込めません。');
                     app.quit();
+                    // TODO:リトライ
                 }
             });
         } else {
@@ -90,44 +100,34 @@ function authorize() {
         
         // settingsにaccess_tokenが保存されているか？
         if (settings.access_token) {
-            
+            // TODO: ファイル一覧を表示する
+            console.log('アクセストークンはすでに存在します:' + settings.access_token);
         } else {
-            getAccessToken(oauth2Client, port);
+            authrize(oauth2Client, port);
         }
     });
 }
 
-function getAccessToken(oauth2Client, port) {
+function authrize(oauth2Client, port) {
     const authUrl = oauth2Client.generateAuthUrl({
         response_type: 'code token',
         scope: SCOPES
     });
 
     // サーバを立てる
-    http.createServer((req, res) => { 
-        httpCallback(req, res, oauth2Client);
-    }).listen(port, 'localhost');
+    http.createServer(httpCallback).listen(port, 'localhost');
 
-    // authUrlをWebView中にロードする
+    // authUrlをWebView中に表示、ユーザーにGoogleへのログインを求める
     const webview = document.getElementById('authview');
     webview.loadURL(authUrl);
 }
 
-function httpCallback(request, response, oauth2Client) {
+function httpCallback(request, response) {
+    // 念のためpostされたデータは受け取っておく
     let postData = "";
     request.on("data", chunk => postData += chunk);
     request.on("end", () => response.end());
 }
-
-function parseUrlAndGetToken(url) {
-    let query = require('url').parse(url, true).query;
-
-    if (query && query.code) {
-        return query.code;
-    } else {
-        return null;
-    }
-};
 
 function listFiles(auth) {
     var service = google.drive('v3');
