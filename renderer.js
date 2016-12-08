@@ -81,7 +81,7 @@ window.onload = () => {
                 setDefaultSetting(settings);
             }
         }
-        authorize();       
+        //authorize();       
     });
 };
 
